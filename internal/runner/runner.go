@@ -7,11 +7,35 @@ import (
 	"time"
 )
 
+// Stat acumula contagem e tempo total de um grupo de requisições.
+type Stat struct {
+	Count int
+	Total time.Duration
+}
+
+func (s *Stat) Add(d time.Duration) {
+	s.Count++
+	s.Total += d
+}
+
+func (s *Stat) Merge(o Stat) {
+	s.Count += o.Count
+	s.Total += o.Total
+}
+
+// Avg retorna o tempo médio; zero se não houver amostras.
+func (s Stat) Avg() time.Duration {
+	if s.Count == 0 {
+		return 0
+	}
+	return s.Total / time.Duration(s.Count)
+}
+
 type Result struct {
 	TotalTime     time.Duration
 	TotalRequests int
-	StatusCodes   map[int]int
-	Errors        int
+	Stats         map[int]*Stat // por status HTTP
+	Errors        Stat          // falhas sem resposta HTTP
 }
 
 // Run dispara exatamente `requests` requisições usando `concurrency` workers.
@@ -24,19 +48,15 @@ func Run(targetURL string, requests, concurrency int) Result {
 		},
 	}
 
-	// O canal de jobs garante que o total seja exato: cada item é
-	// consumido por um único worker.
 	jobs := make(chan struct{}, requests)
 	for range requests {
 		jobs <- struct{}{}
 	}
 	close(jobs)
 
-	// Cada worker acumula seus próprios resultados (sem lock) e
-	// os devolve ao final.
 	type partial struct {
-		codes  map[int]int
-		errors int
+		stats  map[int]*Stat
+		errors Stat
 	}
 	partials := make([]partial, concurrency)
 
@@ -47,34 +67,47 @@ func Run(targetURL string, requests, concurrency int) Result {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			p := partial{codes: make(map[int]int)}
+			p := partial{stats: make(map[int]*Stat)}
 			for range jobs {
+				reqStart := time.Now()
 				resp, err := client.Get(targetURL)
 				if err != nil {
-					p.errors++
+					p.errors.Add(time.Since(reqStart))
 					continue
 				}
-				// Consome o body para permitir reuso da conexão.
+				// Lê o body inteiro: o tempo medido é o da resposta completa.
 				_, _ = io.Copy(io.Discard, resp.Body)
 				resp.Body.Close()
-				p.codes[resp.StatusCode]++
+				elapsed := time.Since(reqStart)
+
+				st := p.stats[resp.StatusCode]
+				if st == nil {
+					st = &Stat{}
+					p.stats[resp.StatusCode] = st
+				}
+				st.Add(elapsed)
 			}
 			partials[id] = p
 		}(w)
 	}
 
 	wg.Wait()
-	elapsed := time.Since(start)
+	totalTime := time.Since(start)
 
 	result := Result{
-		TotalTime:     elapsed,
+		TotalTime:     totalTime,
 		TotalRequests: requests,
-		StatusCodes:   make(map[int]int),
+		Stats:         make(map[int]*Stat),
 	}
 	for _, p := range partials {
-		result.Errors += p.errors
-		for code, n := range p.codes {
-			result.StatusCodes[code] += n
+		result.Errors.Merge(p.errors)
+		for code, s := range p.stats {
+			dst := result.Stats[code]
+			if dst == nil {
+				dst = &Stat{}
+				result.Stats[code] = dst
+			}
+			dst.Merge(*s)
 		}
 	}
 	return result
