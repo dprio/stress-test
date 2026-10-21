@@ -1,12 +1,14 @@
-package main
+package report
 
 import (
 	"fmt"
 	"sort"
+
+	"github.com/dprio/stress-test/internal/runner"
 )
 
 // PrintReport exibe o relatório final no console.
-func PrintReport(r Result) {
+func PrintReport(r runner.Result) {
 	fmt.Println()
 	fmt.Println("========== Relatório do Teste de Carga ==========")
 	fmt.Printf("Tempo total gasto:            %s\n", r.TotalTime)

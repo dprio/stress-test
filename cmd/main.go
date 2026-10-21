@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+
+	"github.com/dprio/stress-test/internal/report"
+	"github.com/dprio/stress-test/internal/runner"
 )
 
 func main() {
@@ -25,8 +28,8 @@ func main() {
 
 	fmt.Printf("Iniciando teste de carga: url=%s requests=%d concurrency=%d\n", *targetURL, *requests, *concurrency)
 
-	result := Run(*targetURL, *requests, *concurrency)
-	PrintReport(result)
+	result := runner.Run(*targetURL, *requests, *concurrency)
+	report.PrintReport(result)
 }
 
 func validate(rawURL string, requests, concurrency int) error {
